@@ -1,6 +1,7 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import time
 
 #detect tangan
 mp_hands = mp.solutions.hands
@@ -41,6 +42,58 @@ def is_fist(landmarks):
 
     return thumb_closed and index_closed and middle_closed and ring_closed and pinky_closed
 
+
+def draw_fire_effect(frame, landmarks, elapsed):
+    height, width = frame.shape[:2]
+    points = np.array(
+        [(int(point.x * width), int(point.y * height)) for point in landmarks],
+        dtype=np.int32
+    )
+    x_min, y_min = points.min(axis=0)
+    x_max, y_max = points.max(axis=0)
+    hand_width = max(x_max - x_min, 1)
+    hand_height = max(y_max - y_min, 1)
+
+    overlay = frame.copy()
+    flicker = 0.9 + 0.1 * np.sin(elapsed * 12)
+    flame_count = 7
+
+    for index in range(flame_count):
+        center_x = x_min + int(hand_width * (index + 0.5) / flame_count)
+        base_y = y_max + int(hand_height * 0.18)
+        flame_width = max(int(hand_width * 0.24), 8)
+        flame_height = max(int(hand_height * (0.55 + 0.18 * np.sin(elapsed * 8 + index))), 12)
+        sway = int(np.sin(elapsed * 7 + index * 1.7) * hand_width * 0.12)
+        tip_y = y_min - int(hand_height * 0.2) + int(np.sin(elapsed * 9 + index) * hand_height * 0.12)
+        points_outer = np.array([
+            (center_x - flame_width, base_y),
+            (center_x - flame_width // 2, base_y - flame_height // 2),
+            (center_x + sway, tip_y),
+            (center_x + flame_width, base_y - flame_height // 3),
+            (center_x + flame_width // 2, base_y),
+        ], dtype=np.int32)
+        cv2.fillPoly(overlay, [points_outer], (0, int(105 * flicker), 255))
+
+        points_inner = np.array([
+            (center_x - flame_width // 2, base_y),
+            (center_x - flame_width // 4, base_y - flame_height // 3),
+            (center_x + sway // 2, tip_y + flame_height // 4),
+            (center_x + flame_width // 2, base_y),
+        ], dtype=np.int32)
+        cv2.fillPoly(overlay, [points_inner], (0, 235, 255))
+
+    cv2.ellipse(
+        overlay,
+        ((x_min + x_max) // 2, y_max),
+        (max(hand_width // 2, 10), max(hand_height // 4, 8)),
+        0,
+        0,
+        360,
+        (0, 80, 255),
+        -1
+    )
+    return cv2.addWeighted(overlay, 0.72, frame, 0.28, 0)
+
 #open camera
 cap = cv2.VideoCapture(0)
 
@@ -62,6 +115,7 @@ while True:
 
     peace_detected = False
     fist_detected = False
+    fist_landmarks = None
 
     if hand_result.multi_hand_landmarks:
 
@@ -80,6 +134,7 @@ while True:
 
             if is_fist(hand_landmarks.landmark):
                 fist_detected = True
+                fist_landmarks = hand_landmarks.landmark
                 break
 
     #blur efek
@@ -92,10 +147,7 @@ while True:
             0
         )
     elif fist_detected:
-        blurred = cv2.GaussianBlur(frame, (61, 61), 0)
-        red_overlay = np.zeros_like(frame)
-        red_overlay[:, :, 2] = 255
-        frame = cv2.addWeighted(blurred, 0.7, red_overlay, 0.3, 0)
+        frame = draw_fire_effect(frame, fist_landmarks, time.monotonic())
 
     cv2.imshow(
         "Peace Blur",
